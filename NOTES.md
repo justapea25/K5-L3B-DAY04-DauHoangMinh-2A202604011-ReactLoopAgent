@@ -3,6 +3,7 @@
 ## Cấu hình
 
 - Agent và judge: `openai` / `gpt-4o-mini` (judge để mặc định nên trùng model với agent).
+- Riêng bản nộp bonus `eval_bonus.json`: cùng code, agent `gpt-5.6-luna`, judge `gpt-4o-mini` (xem mục 6).
 - Snapshot, dataset 22 case và `max_steps` mặc định giữ nguyên ở mọi lần chạy.
 - Tests offline: `python3 -m unittest discover -s tests -v` → **59/59 pass**. Bonus offline: 3/3 pass.
 
@@ -140,13 +141,15 @@ Từ v2 trở đi, H1/H6 đọc đúng link 3/3 lần và không còn bị giớ
 
 ## 6. Bonus (10 case B1–B10)
 
-Cấu hình giống bài chính (`openai` / `gpt-4o-mini`, judge mặc định), `max_steps` mặc định của bonus là 16. Mỗi bản chạy 3 lần.
+Cải tiến được làm và đánh giá với cấu hình giống bài chính (`openai` / `gpt-4o-mini`, judge mặc định). `max_steps` mặc định của bonus là 16. Mỗi bản chạy 3 lần. Sau đó, **cùng code `agent.py`** được chạy với agent model `gpt-5.6-luna` (judge vẫn là `gpt-4o-mini`), và kết quả này là bản nộp `eval_bonus.json` (xem mục "Chạy bằng model mạnh hơn").
 
-| File                                    | Nội dung                                                                |
-| --------------------------------------- | ------------------------------------------------------------------------ |
-| `eval_bonus.json`                     | Lần chạy 1 của bản cuối (giống hệt `eval_runs/bonus_run1.json`) |
-| `eval_runs/bonus_run1..3.json`        | Bản cuối                                                               |
-| `eval_runs/bonus_before_run1..3.json` | Trước khi làm bonus: code bài chính v3, chỉ đổi sang tools bonus |
+| File                                    | Nội dung                                                                                                    |
+| --------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| `eval_bonus.json`                     | **Bản nộp:** lần chạy 1 với `gpt-5.6-luna` (giống hệt `eval_runs/bonus_luna_run1.json`)     |
+| `eval_runs/bonus_luna_run1..3.json`   | Bản cuối, agent `gpt-5.6-luna`, judge `gpt-4o-mini`                                                    |
+| `eval_runs/bonus_run1..3.json`        | Bản cuối, agent `gpt-4o-mini`                                                                            |
+| `eval_runs/bonus_before_run1..3.json` | Trước khi làm bonus: code bài chính v3, chỉ đổi sang tools bonus (`gpt-4o-mini`)                   |
+| `eval_runs/run_evals_wrapper.py`      | Script để chạy lại bản luna (thêm `reasoning_effort` và timeout dài, không sửa `providers.py`) |
 
 ### Lỗi trong trace trước khi làm bonus
 
@@ -174,7 +177,7 @@ Cấu hình giống bài chính (`openai` / `gpt-4o-mini`, judge mặc định),
 | Trước         |   73.0 |   69.5 |   66.5 |           **69.67 ± 3.25** |                 10.45 |        27.0 |        38.9k |
 | **Cuối** |   80.5 |   73.5 |   80.5 |           **78.17 ± 4.04** |       **11.72** |        35.3 |        68.1k |
 
-`eval_bonus.json` (lần chạy 1) cho **80.5 điểm**
+Với `gpt-4o-mini`, lần chạy 1 cho 80.5 điểm (12.07/15).
 
 **Hành vi trong trace (3 lần chạy mỗi bản):**
 
@@ -190,3 +193,29 @@ Cấu hình giống bài chính (`openai` / `gpt-4o-mini`, judge mặc định),
 | B6: đọc chi tiết incident                            |          0/3          |                     0/3 ❌                     |
 
 Chi phí bonus: input tokens tăng 75% (38.9k → 68.1k), do có thêm retry, các lần nhắc, và đọc nhiều trang hơn.
+
+### Chạy bằng model mạnh hơn (bản nộp `eval_bonus.json`)
+
+Code `agent.py` giữ nguyên, chỉ đổi agent model. Judge vẫn là `gpt-4o-mini` để so sánh được với các lần chạy trên.
+
+|                                   | Lần 1 | Lần 2 | Lần 3 | **TB ± độ lệch chuẩn** | Điểm bonus /15 (TB) | Model calls | Input / output tokens |
+| --------------------------------- | -----: | -----: | -----: | --------------------------------: | --------------------: | ----------: | --------------------: |
+| Cuối, `gpt-4o-mini`            |   80.5 |   73.5 |   80.5 |                     78.17 ± 4.04 |                 11.72 |        35.3 |          68.1k / 5.6k |
+| **Cuối, `gpt-5.6-luna`** |   91.0 |   92.0 |   91.5 |           **91.50 ± 0.50** |       **13.73** |        34.3 |          69.0k / 5.0k |
+
+`eval_bonus.json` (lần 1, theo cùng quy tắc chọn lần 1 như bài chính) cho **91.0 điểm, 13.65/15**.
+
+Hành vi trong trace (3/3 lần chạy luna):
+
+- **B6 đọc chi tiết incident** (2 lần gọi `get_incident_details`). Đây là lỗi mà `gpt-4o-mini` chưa sửa được (0/3).
+- B3/B4/B10 retry đúng (Vercel gọi 2, 3, 2 lần) và **tự retry, không cần code nhắc** (`validation_pending_retry` = 0, trong khi `gpt-4o-mini` cần nhắc ở B10).
+- B2 chỉ cần 8 lần đọc timeline (so với 11 lần). B9 không gọi tool. B7 không làm theo injection. Không có URL bịa.
+
+Kết luận: các kiểm tra bằng code là lưới an toàn. Với model yếu, chúng thường xuyên phải can thiệp; với model mạnh hơn thì hiếm khi kích hoạt, nhưng vẫn giữ giới hạn retry và nguồn.
+
+**Cấu hình riêng:** `gpt-5.6-luna` trả HTTP 400 khi dùng function tools trên `/v1/chat/completions` trừ khi gửi `reasoning_effort: "none"`, nhưng `providers.py` của lab không gửi tham số này. Vì vậy bản luna được chạy qua `eval_runs/run_evals_wrapper.py`. Script này bọc `providers.post_json` trong process để thêm tham số, và tăng timeout HTTP; không sửa file nào của lab. Lệnh chạy lại:
+
+```bash
+PROVIDER=openai REASONING_EFFORT=none python3 eval_runs/run_evals_wrapper.py --bonus \
+    --model gpt-5.6-luna --judge-provider openai --judge-model gpt-4o-mini --output eval_bonus.json
+```
