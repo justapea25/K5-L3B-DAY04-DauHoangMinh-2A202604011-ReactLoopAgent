@@ -37,6 +37,39 @@ class LinkGateTests(unittest.TestCase):
         self.assertFalse(any(t['event'] == 'validation_unread_link' for t in result['trace']))
 
 
+FAKE = 'https://www.githubstatus.com/incidents/pfbmpxxfq1cy'  # ghép từ ID, không có trong tool result
+
+
+class UrlGateTests(unittest.TestCase):
+    def test_fabricated_url_gets_revision(self):
+        fake = FakeProvider([tool_call('1', 'get_status', '{"provider":"github"}'),
+                             final('Xem ' + FAKE), final('Xem ID pfbmpxxfq1cy tại https://www.githubstatus.com')])
+        result = run_agent('x', fake, StatusTools())
+        self.assertEqual(result['status'], 'completed')
+        gate = [t for t in result['trace'] if t['event'] == 'validation_unobserved_url']
+        self.assertEqual(gate[0]['urls'], [FAKE])
+        self.assertNotIn(FAKE, result['answer'])
+
+    def test_homepage_and_observed_urls_are_allowed(self):
+        fake = FakeProvider([tool_call('1', 'get_incident_details', LINKED),
+                             final(f'Nguồn [chi tiết]({URL_B}) và https://www.githubstatus.com/.')])
+        result = run_agent('x', fake, StatusTools())
+        self.assertFalse(any(t['event'] == 'validation_unobserved_url' for t in result['trace']))
+
+    def test_url_in_question_is_allowed(self):
+        fake = FakeProvider([final('Link bạn gửi: https://example.com/a/b')])
+        result = run_agent('Xem https://example.com/a/b', fake, StatusTools())
+        self.assertEqual(result['answer'], 'Link bạn gửi: https://example.com/a/b')
+
+    def test_persistent_fabrication_is_redacted_after_two_nudges(self):
+        fake = FakeProvider([final('A ' + FAKE), final('B ' + FAKE), final('C ' + FAKE)])
+        result = run_agent('x', fake, StatusTools())
+        self.assertEqual(result['status'], 'completed')
+        self.assertNotIn(FAKE, result['answer'])
+        self.assertEqual(sum(t['event'] == 'validation_unobserved_url' for t in result['trace']), 2)
+        self.assertTrue(any(t['event'] == 'url_redacted' for t in result['trace']))
+
+
 class FailedToolNoteTests(unittest.TestCase):
     def test_failed_tool_observation_has_note_but_trace_keeps_raw(self):
         fake = FakeProvider([tool_call('1', 'get_status', '{"provider":"invalid"}'), final('Không kiểm tra được')])
