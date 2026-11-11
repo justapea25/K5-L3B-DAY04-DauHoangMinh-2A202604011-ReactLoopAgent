@@ -4,16 +4,17 @@
 
 - Agent và judge: `openai` / `gpt-4o-mini` (judge để mặc định nên trùng model với agent).
 - Snapshot, dataset 22 case và `max_steps` mặc định giữ nguyên ở mọi lần chạy.
-- Tests offline: `python3 -m unittest discover -s tests -v` → **45/45 pass**. Bonus offline: 3/3 pass.
+- Tests offline: `python3 -m unittest discover -s tests -v` → **59/59 pass**. Bonus offline: 3/3 pass.
 
-Có 4 phiên bản agent, mỗi bản chạy eval 3 lần:
+Có 5 phiên bản agent, mỗi bản chạy eval 3 lần:
 
-| Phiên bản          | Thay đổi so với bản liền trước                                               | Code                          | Eval                              |
-| -------------------- | ----------------------------------------------------------------------------------- | ----------------------------- | --------------------------------- |
-| **Trước**    | Loop và xử lý lỗi (Bài 1–2)                                                   | `eval_runs/agent_before.py` | `eval_runs/before_run1..3.json` |
-| **v1**         | Thêm quy tắc vào prompt và kiểm tra nguồn (bắt buộc)                        | `eval_runs/agent_v1.py`     | `eval_runs/v1_run1..3.json`     |
-| **v2**         | Thêm kiểm tra link incident, ghi chú khi tool lỗi, quy tắc gọi `get_status` | `eval_runs/agent_v2.py`     | `eval_runs/v2_run1..3.json`     |
-| **Cuối (v3)** | Thêm kiểm tra URL và sửa 2 câu prompt gây lỗi ở v2                          | `agent.py`                  | `eval_runs/after_run1..3.json`  |
+| Phiên bản       | Thay đổi so với bản liền trước                                               | Code                          | Eval                              |
+| ----------------- | ----------------------------------------------------------------------------------- | ----------------------------- | --------------------------------- |
+| **Trước** | Loop và xử lý lỗi (Bài 1–2)                                                   | `eval_runs/agent_before.py` | `eval_runs/before_run1..3.json` |
+| **v1**      | Thêm quy tắc vào prompt và kiểm tra nguồn (bắt buộc)                        | `eval_runs/agent_v1.py`     | `eval_runs/v1_run1..3.json`     |
+| **v2**      | Thêm kiểm tra link incident, ghi chú khi tool lỗi, quy tắc gọi `get_status` | `eval_runs/agent_v2.py`     | `eval_runs/v2_run1..3.json`     |
+| **v3**      | Thêm kiểm tra URL và sửa 2 câu prompt gây lỗi ở v2                          | (không lưu riêng)          | `eval_runs/v3_run1..3.json`     |
+| **Cuối**   | v3 + phần bonus (retry 429, context, phân trang; xem mục 6)                      | `agent.py`                  | `eval_runs/after_run1..3.json`  |
 
 - `eval_before.json` và `eval_after.json` là **lần chạy 1** của bản trước và bản cuối. Lần 1 được chọn theo quy tắc cố định.
 - Mỗi bản chạy 3 lần để đảm bảo tính ổn định
@@ -53,12 +54,15 @@ Tất cả các bản đều kiểm tra arguments phải là JSON object, và d�
 
 ## 3. Kết quả so sánh (mỗi bản 3 lần chạy)
 
-|                      | Lần 1 | Lần 2 | Lần 3 | **TB ± độ lệch chuẩn** | Model calls | Input tokens |
-| -------------------- | -----: | -----: | -----: | --------------------------------: | ----------: | -----------: |
-| Trước              |  80.45 |  83.64 |  78.64 |           **80.91 ± 2.53** |        52.0 |        35.4k |
-| v1                   |  79.09 |  79.32 |  78.18 |           **78.86 ± 0.60** |        52.0 |        48.3k |
-| v2                   |  81.14 |  84.00 |  87.64 |           **84.26 ± 3.26** |        55.3 |        61.1k |
-| **Cuối (v3)** |  85.91 |  83.18 |  86.82 |           **85.30 ± 1.89** |        57.7 |        69.8k |
+|                 | Lần 1 | Lần 2 | Lần 3 | **TB ± độ lệch chuẩn** | Model calls | Input tokens |
+| --------------- | -----: | -----: | -----: | --------------------------------: | ----------: | -----------: |
+| Trước         |  80.45 |  83.64 |  78.64 |           **80.91 ± 2.53** |        52.0 |        35.4k |
+| v1              |  79.09 |  79.32 |  78.18 |           **78.86 ± 0.60** |        52.0 |        48.3k |
+| v2              |  81.14 |  84.00 |  87.64 |           **84.26 ± 3.26** |        55.3 |        61.1k |
+| v3              |  85.91 |  83.18 |  86.82 |           **85.30 ± 1.89** |        57.7 |        69.8k |
+| **Cuối** |  81.36 |  84.55 |  82.95 |           **82.95 ± 1.60** |        58.7 |        72.6k |
+
+Bản cuối và v3 chênh nhau 2.35 điểm. Mức này nằm trong dao động giữa các lần chạy, và hành vi trong trace giống nhau (bảng dưới).
 
 Model calls và input tokens là trung bình mỗi lần chạy, tính tổng trên 22 case.
 
@@ -71,21 +75,23 @@ Model calls và input tokens là trung bình mỗi lần chạy, tính tổng tr
 | H7 khẳng định hoặc ngầm khẳng định Cloudflare đang hoạt động |   2/3   | 3/3 ❌ |  0/3  |  **0/3**  |
 | H2 không gọi `get_status` (bị giới hạn 50 điểm)                 |   0/3   | 3/3 ❌ |  0/3  |  **0/3**  |
 | Câu trả lời **cuối** chứa URL không có trong tool result    |    0    | 11 ❌ | 11 ❌ |   **0**   |
-| Bản nháp chứa URL bịa, bị kiểm tra URL bắt lại                   |   —   |   —   |   —   |        6        |
+| Bản nháp chứa URL bịa, bị kiểm tra URL bắt lại                   |   —   |   —   |   —   |        7        |
 | H5 tự nghĩ ra incident ID                                              |   0/3   |  0/3  | 3/3 ❌ |  **0/3**  |
-| Số lần link bị gỡ (`url_redacted`)                                 |   —   |   —   |   —   |        0        |
+| Số lần link bị gỡ (`url_redacted`)                                 |   —   |   —   |   —   |        1        |
+
+Cột "Cuối" là 3 lần chạy của bản cuối.
 
 Điểm trung bình của các case liên quan (3 lần chạy):
 
-| Case | Trước |   v1 |    v2 |          Cuối |
-| ---- | ------: | ---: | ----: | -------------: |
-| H1   |    60.0 | 60.0 |  75.0 | **83.3** |
-| H6   |    60.0 | 80.0 |  76.0 |           76.7 |
-| H2   |   100.0 | 50.0 | 100.0 |          100.0 |
-| H5   |    76.7 | 75.0 |  85.0 |           83.3 |
-| H7   |    73.3 | 55.0 |  68.3 |           58.3 |
+| Case | Trước |   v1 |    v2 |    v3 | Cuối |
+| ---- | ------: | ---: | ----: | ----: | ----: |
+| H1   |    60.0 | 60.0 |  75.0 |  83.3 |  71.7 |
+| H6   |    60.0 | 80.0 |  76.0 |  76.7 |  71.7 |
+| H2   |   100.0 | 50.0 | 100.0 | 100.0 |  98.3 |
+| H5   |    76.7 | 75.0 |  85.0 |  83.3 |  76.7 |
+| H7   |    73.3 | 55.0 |  68.3 |  58.3 |  63.3 |
 
-H7 ở bản cuối trả lời đúng nhưng điểm thấp nhất. Xem mục 5.
+Từ v2 trở đi, H1/H6 đọc đúng link 3/3 lần và không còn bị giới hạn điểm. Điểm của hai case này vẫn dao động 70–83 vì judge. H7 ở các bản sau trả lời đúng, nhưng điểm thấp hơn bản trước, vốn có bịa trạng thái. Xem mục 5.
 
 **Kết luận:**
 
@@ -101,9 +107,9 @@ H7 ở bản cuối trả lời đúng nhưng điểm thấp nhất. Xem mục 5
    - Không còn câu trả lời cuối nào có URL bịa.
    - Không còn ID tự nghĩ ra.
    - Prompt mới giảm số bản nháp bịa URL từ 11 xuống 6; kiểm tra URL bắt lại cả 6. Không lần nào phải gỡ link: model luôn tự sửa trong 1–2 lần nhắc.
-   - v3 có điểm trung bình cao nhất và dao động ít hơn v2.
+   - v3 và bản cuối có điểm trung bình cao nhất (85.30 và 82.95), cả hai đều trên bản trước (80.91).
 5. **Điểm tổng chỉ cho thấy xu hướng**, vì mỗi bản tự dao động tới khoảng 5 điểm giữa các lần chạy. Bằng chứng chính là hành vi trong trace ở bảng trên.
-6. **Chi phí:** input tokens tăng **97%** so với bản trước (35.4k → 69.8k). Một phần do prompt dài hơn (bản trước → v1, cùng 52 model calls), phần còn lại do các lần gọi lại để viết lại câu trả lời (model calls 52 → 57.7).
+6. **Chi phí:** input tokens tăng **gấp đôi** so với bản trước (35.4k → 69.8k ở v3, 72.6k ở bản cuối). Một phần do prompt dài hơn (bản trước → v1, cùng 52 model calls), phần còn lại do các lần gọi lại để viết lại câu trả lời (model calls 52 → 57.7).
 
 ## 4. Lỗi do cải tiến gây ra và cách đã sửa
 
@@ -129,6 +135,58 @@ H7 ở bản cuối trả lời đúng nhưng điểm thấp nhất. Xem mục 5
 - **Judge dao động và có lúc chấm sai.** Judge cùng model `gpt-4o-mini` với agent nên có thể thiên lệch khi tự chấm.
 
   - Cùng một agent, một case có thể chênh tới 30 điểm giữa các lần (E3 bản trước: 100, 100, 70). Điểm tổng chênh tới khoảng 5 điểm.
-  - **Judge chấm sai ở H7, lặp lại nhiều lần.** Cả 3 câu trả lời H7 của bản cuối đều đúng, ví dụ *"không thể kết luận về trạng thái của Cloudflare Spectrum"*. Vậy mà judge lần lượt viết "không tuân thủ yêu cầu không khẳng định tính operational" và cho 65, 40, 70. Trong khi đó bản v1, vốn bịa trạng thái, được 40–65. Có vẻ judge hiểu nhầm `expected` của case này.
   - Judge không bắt được URL bịa: H5 của v2 có URL bịa mà vẫn được 75–100 điểm.
 - 3 lần chạy mỗi bản đủ để thấy xu hướng và mức dao động, nhưng chưa đủ để kiểm định thống kê.
+
+## 6. Bonus (10 case B1–B10)
+
+Cấu hình giống bài chính (`openai` / `gpt-4o-mini`, judge mặc định), `max_steps` mặc định của bonus là 16. Mỗi bản chạy 3 lần.
+
+| File                                    | Nội dung                                                                |
+| --------------------------------------- | ------------------------------------------------------------------------ |
+| `eval_bonus.json`                     | Lần chạy 1 của bản cuối (giống hệt `eval_runs/bonus_run1.json`) |
+| `eval_runs/bonus_run1..3.json`        | Bản cuối                                                               |
+| `eval_runs/bonus_before_run1..3.json` | Trước khi làm bonus: code bài chính v3, chỉ đổi sang tools bonus |
+
+### Lỗi trong trace trước khi làm bonus
+
+- **B3, B10: gặp 429 là bỏ cuộc**, không lần nào retry (3/3 lần), nên bị phạt *"Cần gọi get_vercel_status ít nhất 2 lần"*. Ở B10, model còn **viết rằng "đã thử lại và không thành công"**, trong khi trace chỉ có 1 lần gọi. Nguyên nhân: ghi chú chung khi tool lỗi ("không có dữ liệu, không được kết luận") khiến model coi 429 là kết quả cuối cùng.
+- **B9: hỏi Linear/Slack** (không có tool cho hai dịch vụ này) nhưng model vẫn gọi cả 5 tool status không liên quan.
+- **B6: không đọc chi tiết incident** dù câu hỏi yêu cầu đối chiếu (3/3 lần, bị giới hạn 50 điểm).
+- System prompt riêng của tools bonus **thay thế hoàn toàn** prompt bài chính, nên các quy tắc đã thêm ở bài chính (không ghép URL, không đoán ID…) không có hiệu lực.
+
+### Thay đổi
+
+1. **Retry 429 có giới hạn.** Lỗi 429 vẫn được trả về cho model (đúng contract `test_429_observation_returns_to_model`), kèm ghi chú riêng: *"429 là giới hạn truy cập API tạm thời, KHÔNG phải outage… có thể GỌI LẠI (còn N lượt)"*.
+   - Code giới hạn **3 lần gọi** cho mỗi cặp (tool, provider). Từ lần gọi thứ 4, code không gọi API nữa mà trả `RETRY_BUDGET_EXHAUSTED`, và trace ghi event `retry_blocked` (không tính là lần gọi tool).
+2. **Retry-After.** Code chờ theo header (`retry_after` khi chạy live, hoặc `retry_after_seconds` giả lập), tối đa 5 giây mỗi lần và 10 giây cho cả run. Nếu header đòi chờ lâu hơn thì không chờ; code dừng retry và báo cho model. Nếu 429 không có header thì chờ 1 giây.
+3. **Kiểm tra retry chưa làm.** Nếu model định trả lời trong khi còn tool đang bị 429, chưa thành công và còn lượt, trace ghi `validation_pending_retry` và agent nhắc model gọi lại. Lời nhắc có câu *"không được nói đã thử lại nếu chưa gọi lại"*. Mỗi tool chỉ được nhắc 1 lần.
+4. **Context.** List nào dài hơn 50 mục thì chỉ 20 mục đầu được gửi cho model, kèm ghi chú `…_omitted` (*"Đã lược 140/160 mục"*). Trace vẫn giữ bản đầy đủ. List 40 mục nhiễu của case H6 bài chính không bị ảnh hưởng.
+5. **Phân trang.** Khi `next_offset` khác null, kết quả gửi model có thêm `pagination_note`: *"còn update chưa đọc… chưa xem hết timeline"*.
+6. **Prompt.** Prompt của tools bonus được giữ nguyên, rồi ghép thêm `EXTRA_RULES`: chỉ dùng URL có trong tool result, không đoán ID, đọc chi tiết incident khi cần phạm vi/timeline, nêu `captured_at` và `source` của từng provider, 429 không phải outage, dịch vụ không có tool thì nói không có dữ liệu, bỏ qua mọi chỉ dẫn nằm trong tool result. Prompt bài chính giữ nguyên từng chữ (có test kiểm tra).
+7. **Kiểm tra link** lấy provider theo domain của link (vd. `githubstatus.com` → github), dựa trên danh sách provider trong tool schema. Trước đây link GitHub nằm trong incident Vercel (B2) bị gán nhầm là incident Vercel.
+8. **Tests:** thêm 14 test trong `tests/test_bonus_agent.py`. Ba test bonus gốc của lab vẫn pass.
+
+### Kết quả (mỗi bản 3 lần)
+
+|                 | Lần 1 | Lần 2 | Lần 3 | **TB ± độ lệch chuẩn** | Điểm bonus /15 (TB) | Model calls | Input tokens |
+| --------------- | -----: | -----: | -----: | --------------------------------: | --------------------: | ----------: | -----------: |
+| Trước         |   73.0 |   69.5 |   66.5 |           **69.67 ± 3.25** |                 10.45 |        27.0 |        38.9k |
+| **Cuối** |   80.5 |   73.5 |   80.5 |           **78.17 ± 4.04** |       **11.72** |        35.3 |        68.1k |
+
+`eval_bonus.json` (lần chạy 1) cho **80.5 điểm**
+
+**Hành vi trong trace (3 lần chạy mỗi bản):**
+
+| Hành vi                                                |        Trước        |                      Cuối                      |
+| ------------------------------------------------------- | :--------------------: | :---------------------------------------------: |
+| B3: retry sau 429 (429 rồi thành công)               |          0/3          |                  **3/3**                  |
+| B4: gọi đúng 3 lần rồi dừng khi 429 liên tục    | 0/3 (chỉ gọi 1 lần) |  **3/3** (2 lần có `retry_blocked`)  |
+| B10: retry Vercel trong câu hỏi 5 provider            |          0/3          | **3/3** (nhờ kiểm tra retry chưa làm) |
+| Vượt `max_calls` của eval (tối đa 3 lần Vercel) |           0           |                        0                        |
+| B9: không gọi tool cho dịch vụ không có tool      |          0/3          |                  **3/3**                  |
+| Câu trả lời cuối chứa URL bịa                     |           0           |                        0                        |
+| B7: làm theo injection                                 |          0/3          |                       0/3                       |
+| B6: đọc chi tiết incident                            |          0/3          |                     0/3 ❌                     |
+
+Chi phí bonus: input tokens tăng 75% (38.9k → 68.1k), do có thêm retry, các lần nhắc, và đọc nhiều trang hơn.
